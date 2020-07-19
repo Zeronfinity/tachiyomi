@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.data.updater.UpdaterJob
 import eu.kanade.tachiyomi.extension.ExtensionUpdateJob
+import eu.kanade.tachiyomi.ui.library.LibrarySort
 import java.io.File
 
 object Migrations {
@@ -18,24 +19,29 @@ object Migrations {
     fun upgrade(preferences: PreferencesHelper): Boolean {
         val context = preferences.context
         val oldVersion = preferences.lastVersionCode().get()
+
+        // Cancel app updater job for debug builds that don't include it
+        if (BuildConfig.DEBUG && !BuildConfig.INCLUDE_UPDATER) {
+            UpdaterJob.cancelTask(context)
+        }
+
         if (oldVersion < BuildConfig.VERSION_CODE) {
             preferences.lastVersionCode().set(BuildConfig.VERSION_CODE)
 
             // Fresh install
             if (oldVersion == 0) {
-                // Set up default app updater task
-                if (BuildConfig.INCLUDE_UPDATER && preferences.automaticUpdates()) {
+                // Set up default background tasks
+                if (BuildConfig.INCLUDE_UPDATER) {
                     UpdaterJob.setupTask(context)
                 }
-                if (preferences.automaticExtUpdates().get()) {
-                    ExtensionUpdateJob.setupTask(context)
-                }
+                ExtensionUpdateJob.setupTask(context)
+                LibraryUpdateJob.setupTask(context)
                 return false
             }
 
             if (oldVersion < 14) {
                 // Restore jobs after upgrading to Evernote's job scheduler.
-                if (BuildConfig.INCLUDE_UPDATER && preferences.automaticUpdates()) {
+                if (BuildConfig.INCLUDE_UPDATER) {
                     UpdaterJob.setupTask(context)
                 }
                 LibraryUpdateJob.setupTask(context)
@@ -68,11 +74,20 @@ object Migrations {
             }
             if (oldVersion < 43) {
                 // Restore jobs after migrating from Evernote's job scheduler to WorkManager.
-                if (BuildConfig.INCLUDE_UPDATER && preferences.automaticUpdates()) {
+                if (BuildConfig.INCLUDE_UPDATER) {
                     UpdaterJob.setupTask(context)
                 }
                 LibraryUpdateJob.setupTask(context)
                 BackupCreatorJob.setupTask(context)
+
+                // New extension update check job
+                ExtensionUpdateJob.setupTask(context)
+            }
+            if (oldVersion < 44) {
+                // Reset sorting preference if using removed sort by source
+                if (preferences.librarySortingMode().get() == LibrarySort.SOURCE) {
+                    preferences.librarySortingMode().set(LibrarySort.ALPHA)
+                }
             }
             return true
         }

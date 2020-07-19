@@ -1,23 +1,20 @@
 package eu.kanade.tachiyomi.ui.manga.info
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.text.TextUtils
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.bumptech.glide.load.engine.DiskCacheStrategy
-import com.google.android.material.chip.Chip
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.Category
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.glide.GlideApp
 import eu.kanade.tachiyomi.data.glide.toMangaThumbnail
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.data.preference.getOrDefault
 import eu.kanade.tachiyomi.databinding.MangaInfoControllerBinding
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceManager
@@ -25,22 +22,26 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.base.controller.NucleusController
 import eu.kanade.tachiyomi.ui.base.controller.withFadeTransaction
+import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceController
+import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchController
 import eu.kanade.tachiyomi.ui.library.ChangeMangaCategoriesDialog
 import eu.kanade.tachiyomi.ui.library.LibraryController
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.manga.MangaController
 import eu.kanade.tachiyomi.ui.recent.history.HistoryController
 import eu.kanade.tachiyomi.ui.recent.updates.UpdatesController
-import eu.kanade.tachiyomi.ui.source.browse.BrowseSourceController
-import eu.kanade.tachiyomi.ui.source.global_search.GlobalSearchController
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
-import eu.kanade.tachiyomi.util.lang.launchInUI
-import eu.kanade.tachiyomi.util.lang.truncateCenter
+import eu.kanade.tachiyomi.util.system.copyToClipboard
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.gone
+import eu.kanade.tachiyomi.util.view.setChips
 import eu.kanade.tachiyomi.util.view.snack
-import eu.kanade.tachiyomi.util.view.toggle
 import eu.kanade.tachiyomi.util.view.visible
+import eu.kanade.tachiyomi.util.view.visibleIf
+import java.text.DateFormat
+import java.text.DecimalFormat
+import java.util.Date
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import reactivecircus.flowbinding.android.view.clicks
 import reactivecircus.flowbinding.android.view.longClicks
@@ -60,13 +61,20 @@ class MangaInfoController(private val fromSource: Boolean = false) :
 
     private val preferences: PreferencesHelper by injectLazy()
 
+    private val dateFormat: DateFormat by lazy {
+        preferences.dateFormat().getOrDefault()
+    }
+
     private var initialLoad: Boolean = true
 
     private var thumbnailUrl: String? = null
 
     override fun createPresenter(): MangaInfoPresenter {
         val ctrl = parentController as MangaController
-        return MangaInfoPresenter(ctrl.manga!!, ctrl.source!!, ctrl.mangaFavoriteRelay)
+        return MangaInfoPresenter(
+            ctrl.manga!!, ctrl.source!!,
+            ctrl.chapterCountRelay, ctrl.lastUpdateRelay, ctrl.mangaFavoriteRelay
+        )
     }
 
     override fun inflateView(inflater: LayoutInflater, container: ViewGroup): View {
@@ -77,15 +85,16 @@ class MangaInfoController(private val fromSource: Boolean = false) :
     override fun onViewCreated(view: View) {
         super.onViewCreated(view)
 
-        // Set onclickListener to toggle favorite when favorite button clicked.
         binding.btnFavorite.clicks()
             .onEach { onFavoriteClick() }
-            .launchInUI()
+            .launchIn(scope)
 
-        // Set onLongClickListener to manage categories when favorite button is clicked.
-        binding.btnFavorite.longClicks()
-            .onEach { onFavoriteLongClick() }
-            .launchInUI()
+        if (presenter.manga.favorite && presenter.getCategories().isNotEmpty()) {
+            binding.btnCategories.visible()
+        }
+        binding.btnCategories.clicks()
+            .onEach { onCategoriesClick() }
+            .launchIn(scope)
 
         if (presenter.source is HttpSource) {
             binding.btnWebview.visible()
@@ -93,64 +102,64 @@ class MangaInfoController(private val fromSource: Boolean = false) :
 
             binding.btnWebview.clicks()
                 .onEach { openInWebView() }
-                .launchInUI()
+                .launchIn(scope)
             binding.btnShare.clicks()
                 .onEach { shareManga() }
-                .launchInUI()
+                .launchIn(scope)
         }
 
         // Set SwipeRefresh to refresh manga data.
         binding.swipeRefresh.refreshes()
             .onEach { fetchMangaFromSource() }
-            .launchInUI()
+            .launchIn(scope)
 
         binding.mangaFullTitle.longClicks()
             .onEach {
-                copyToClipboard(view.context.getString(R.string.title), binding.mangaFullTitle.text.toString())
+                activity?.copyToClipboard(view.context.getString(R.string.title), binding.mangaFullTitle.text.toString())
             }
-            .launchInUI()
+            .launchIn(scope)
 
         binding.mangaFullTitle.clicks()
             .onEach {
                 performGlobalSearch(binding.mangaFullTitle.text.toString())
             }
-            .launchInUI()
+            .launchIn(scope)
 
         binding.mangaArtist.longClicks()
             .onEach {
-                copyToClipboard(binding.mangaArtistLabel.text.toString(), binding.mangaArtist.text.toString())
+                activity?.copyToClipboard(binding.mangaArtistLabel.text.toString(), binding.mangaArtist.text.toString())
             }
-            .launchInUI()
+            .launchIn(scope)
 
         binding.mangaArtist.clicks()
             .onEach {
                 performGlobalSearch(binding.mangaArtist.text.toString())
             }
-            .launchInUI()
+            .launchIn(scope)
 
         binding.mangaAuthor.longClicks()
             .onEach {
-                copyToClipboard(binding.mangaAuthor.text.toString(), binding.mangaAuthor.text.toString())
+                activity?.copyToClipboard(binding.mangaAuthor.text.toString(), binding.mangaAuthor.text.toString())
             }
-            .launchInUI()
+            .launchIn(scope)
 
         binding.mangaAuthor.clicks()
             .onEach {
                 performGlobalSearch(binding.mangaAuthor.text.toString())
             }
-            .launchInUI()
+            .launchIn(scope)
 
         binding.mangaSummary.longClicks()
             .onEach {
-                copyToClipboard(view.context.getString(R.string.description), binding.mangaSummary.text.toString())
+                activity?.copyToClipboard(view.context.getString(R.string.description), binding.mangaSummary.text.toString())
             }
-            .launchInUI()
+            .launchIn(scope)
 
         binding.mangaCover.longClicks()
             .onEach {
-                copyToClipboard(view.context.getString(R.string.title), presenter.manga.title)
+                activity?.copyToClipboard(view.context.getString(R.string.title), presenter.manga.title)
             }
-            .launchInUI()
+            .launchIn(scope)
     }
 
     /**
@@ -216,12 +225,14 @@ class MangaInfoController(private val fromSource: Boolean = false) :
         }
 
         // Update status TextView.
-        binding.mangaStatus.setText(when (manga.status) {
-            SManga.ONGOING -> R.string.ongoing
-            SManga.COMPLETED -> R.string.completed
-            SManga.LICENSED -> R.string.licensed
-            else -> R.string.unknown
-        })
+        binding.mangaStatus.setText(
+            when (manga.status) {
+                SManga.ONGOING -> R.string.ongoing
+                SManga.COMPLETED -> R.string.completed
+                SManga.LICENSED -> R.string.licensed
+                else -> R.string.unknown
+            }
+        )
 
         // Set the favorite drawable to the correct one.
         setFavoriteButtonState(manga.favorite)
@@ -232,16 +243,18 @@ class MangaInfoController(private val fromSource: Boolean = false) :
             val mangaThumbnail = manga.toMangaThumbnail()
 
             GlideApp.with(view.context)
-                    .load(mangaThumbnail)
-                    .diskCacheStrategy(DiskCacheStrategy.RESOURCE)
-                    .centerCrop()
-                    .into(binding.mangaCover)
+                .load(mangaThumbnail)
+                .diskCacheStrategy(DiskCacheStrategy.RESOURCE)
+                .centerCrop()
+                .into(binding.mangaCover)
 
-            GlideApp.with(view.context)
+            if (binding.backdrop != null) {
+                GlideApp.with(view.context)
                     .load(mangaThumbnail)
                     .diskCacheStrategy(DiskCacheStrategy.RESOURCE)
                     .centerCrop()
-                    .into(binding.backdrop)
+                    .into(binding.backdrop!!)
+            }
         }
 
         // Manga info section
@@ -257,25 +270,19 @@ class MangaInfoController(private val fromSource: Boolean = false) :
 
             // Update genres list
             if (!manga.genre.isNullOrBlank()) {
-                binding.mangaGenresTags.removeAllViews()
-
-                manga.getGenres()?.forEach { genre ->
-                    val chip = Chip(view.context).apply {
-                        text = genre
-                        setOnClickListener { performSearch(genre) }
-                    }
-
-                    binding.mangaGenresTags.addView(chip)
-                }
+                binding.mangaGenresTagsCompactChips.setChips(manga.getGenres(), this::performSearch)
+                binding.mangaGenresTagsFullChips.setChips(manga.getGenres(), this::performSearch)
+            } else {
+                binding.mangaGenresTagsWrapper.gone()
             }
 
             // Handle showing more or less info
             binding.mangaSummary.clicks()
                 .onEach { toggleMangaInfo(view.context) }
-                .launchInUI()
+                .launchIn(scope)
             binding.mangaInfoToggle.clicks()
                 .onEach { toggleMangaInfo(view.context) }
-                .launchInUI()
+                .launchIn(scope)
 
             // Expand manga info if navigated from source listing
             if (initialLoad && fromSource) {
@@ -288,7 +295,7 @@ class MangaInfoController(private val fromSource: Boolean = false) :
     private fun hideMangaInfo() {
         binding.mangaSummaryLabel.gone()
         binding.mangaSummary.gone()
-        binding.mangaGenresTags.gone()
+        binding.mangaGenresTagsWrapper.gone()
         binding.mangaInfoToggle.gone()
     }
 
@@ -296,26 +303,51 @@ class MangaInfoController(private val fromSource: Boolean = false) :
         val isExpanded = binding.mangaInfoToggle.text == context.getString(R.string.manga_info_collapse)
 
         binding.mangaInfoToggle.text =
-            if (isExpanded)
+            if (isExpanded) {
                 context.getString(R.string.manga_info_expand)
-            else
+            } else {
                 context.getString(R.string.manga_info_collapse)
+            }
 
         with(binding.mangaSummary) {
             maxLines =
-                if (isExpanded)
+                if (isExpanded) {
                     3
-                else
+                } else {
                     Int.MAX_VALUE
+                }
 
             ellipsize =
-                if (isExpanded)
+                if (isExpanded) {
                     TextUtils.TruncateAt.END
-                else
+                } else {
                     null
+                }
         }
 
-        binding.mangaGenresTags.toggle()
+        binding.mangaGenresTagsCompact.visibleIf { isExpanded }
+        binding.mangaGenresTagsFullChips.visibleIf { !isExpanded }
+    }
+
+    /**
+     * Update chapter count TextView.
+     *
+     * @param count number of chapters.
+     */
+    fun setChapterCount(count: Float) {
+        if (count > 0f) {
+            binding.mangaChapters.text = DecimalFormat("#.#").format(count)
+        } else {
+            binding.mangaChapters.text = resources?.getString(R.string.unknown)
+        }
+    }
+
+    fun setLastUpdateDate(date: Date) {
+        if (date.time != 0L) {
+            binding.mangaLastUpdate.text = dateFormat.format(date)
+        } else {
+            binding.mangaLastUpdate.text = resources?.getString(R.string.unknown)
+        }
     }
 
     /**
@@ -332,6 +364,8 @@ class MangaInfoController(private val fromSource: Boolean = false) :
                 }
             }
         }
+
+        binding.btnCategories.visibleIf { isNowFavorite && presenter.getCategories().isNotEmpty() }
     }
 
     private fun openInWebView() {
@@ -376,7 +410,7 @@ class MangaInfoController(private val fromSource: Boolean = false) :
         // Set the Favorite drawable to the correct one.
         // Border drawable if false, filled drawable if true.
         binding.btnFavorite.apply {
-            icon = ContextCompat.getDrawable(context, if (isFavorite) R.drawable.ic_bookmark_24dp else R.drawable.ic_add_to_library_24dp)
+            icon = ContextCompat.getDrawable(context, if (isFavorite) R.drawable.ic_favorite_24dp else R.drawable.ic_favorite_border_24dp)
             text = context.getString(if (isFavorite) R.string.in_library else R.string.add_to_library)
             isChecked = isFavorite
         }
@@ -449,28 +483,23 @@ class MangaInfoController(private val fromSource: Boolean = false) :
                     }.toTypedArray()
 
                     ChangeMangaCategoriesDialog(this, listOf(manga), categories, preselected)
-                            .showDialog(router)
+                        .showDialog(router)
                 }
             }
         }
     }
 
-    private fun onFavoriteLongClick() {
+    private fun onCategoriesClick() {
         val manga = presenter.manga
+        val categories = presenter.getCategories()
 
-        if (manga.favorite && presenter.getCategories().isNotEmpty()) {
-            val categories = presenter.getCategories()
+        val ids = presenter.getMangaCategoryIds(manga)
+        val preselected = ids.mapNotNull { id ->
+            categories.indexOfFirst { it.id == id }.takeIf { it != -1 }
+        }.toTypedArray()
 
-            val ids = presenter.getMangaCategoryIds(manga)
-            val preselected = ids.mapNotNull { id ->
-                categories.indexOfFirst { it.id == id }.takeIf { it != -1 }
-            }.toTypedArray()
-
-            ChangeMangaCategoriesDialog(this, listOf(manga), categories, preselected)
-                    .showDialog(router)
-        } else {
-            onFavoriteClick()
-        }
+        ChangeMangaCategoriesDialog(this, listOf(manga), categories, preselected)
+            .showDialog(router)
     }
 
     override fun updateCategoriesForMangas(mangas: List<Manga>, categories: List<Category>) {
@@ -478,29 +507,10 @@ class MangaInfoController(private val fromSource: Boolean = false) :
 
         if (!manga.favorite) {
             toggleFavorite()
+            activity?.toast(activity?.getString(R.string.manga_added_library))
         }
 
         presenter.moveMangaToCategories(manga, categories)
-        activity?.toast(activity?.getString(R.string.manga_added_library))
-    }
-
-    /**
-     * Copies a string to clipboard
-     *
-     * @param label Label to show to the user describing the content
-     * @param content the actual text to copy to the board
-     */
-    private fun copyToClipboard(label: String, content: String) {
-        if (content.isBlank()) return
-
-        val activity = activity ?: return
-        val view = view ?: return
-
-        val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText(label, content))
-
-        activity.toast(view.context.getString(R.string.copied_to_clipboard, content.truncateCenter(20)),
-                Toast.LENGTH_SHORT)
     }
 
     /**

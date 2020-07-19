@@ -4,13 +4,13 @@ import android.app.Dialog
 import android.os.Bundle
 import android.view.View
 import com.afollestad.materialdialogs.MaterialDialog
+import com.afollestad.materialdialogs.customview.customView
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.TrackManager
 import eu.kanade.tachiyomi.data.track.TrackService
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.ui.base.controller.DialogController
-import eu.kanade.tachiyomi.util.lang.launchInUI
 import eu.kanade.tachiyomi.util.view.invisible
 import eu.kanade.tachiyomi.util.view.visible
 import java.util.concurrent.TimeUnit
@@ -19,6 +19,7 @@ import kotlinx.android.synthetic.main.track_search_dialog.view.track_search
 import kotlinx.android.synthetic.main.track_search_dialog.view.track_search_list
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import reactivecircus.flowbinding.android.widget.itemClicks
@@ -39,9 +40,11 @@ class TrackSearchDialog : DialogController {
     private val trackController
         get() = targetController as TrackController
 
-    constructor(target: TrackController, service: TrackService) : super(Bundle().apply {
-        putInt(KEY_SERVICE, service.id)
-    }) {
+    constructor(target: TrackController, service: TrackService) : super(
+        Bundle().apply {
+            putInt(KEY_SERVICE, service.id)
+        }
+    ) {
         targetController = target
         this.service = service
     }
@@ -52,14 +55,11 @@ class TrackSearchDialog : DialogController {
     }
 
     override fun onCreateDialog(savedViewState: Bundle?): Dialog {
-        val dialog = MaterialDialog.Builder(activity!!)
-                .customView(R.layout.track_search_dialog, false)
-                .positiveText(android.R.string.ok)
-                .onPositive { _, _ -> onPositiveButtonClick() }
-                .negativeText(android.R.string.cancel)
-                .neutralText(R.string.action_remove)
-                .onNeutral { _, _ -> onRemoveButtonClick() }
-                .build()
+        val dialog = MaterialDialog(activity!!)
+            .customView(R.layout.track_search_dialog)
+            .positiveButton(android.R.string.ok) { onPositiveButtonClick() }
+            .negativeButton(android.R.string.cancel)
+            .neutralButton(R.string.action_remove) { onRemoveButtonClick() }
 
         dialogView = dialog.view
         onViewCreated(dialog.view, savedViewState)
@@ -80,7 +80,7 @@ class TrackSearchDialog : DialogController {
             .onEach { position ->
                 selectedItem = adapter.getItem(position)
             }
-            .launchInUI()
+            .launchIn(trackController.scope)
 
         // Do an initial search based on the manga's title
         if (savedState == null) {
@@ -103,7 +103,7 @@ class TrackSearchDialog : DialogController {
             .map { it.toString() }
             .filter { it.isNotBlank() }
             .onEach { search(it) }
-            .launchInUI()
+            .launchIn(trackController.scope)
     }
 
     private fun search(query: String) {

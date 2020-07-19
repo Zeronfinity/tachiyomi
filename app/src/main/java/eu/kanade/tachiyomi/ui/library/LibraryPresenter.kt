@@ -9,7 +9,6 @@ import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.database.models.MangaCategory
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
-import eu.kanade.tachiyomi.data.preference.getOrDefault
 import eu.kanade.tachiyomi.source.LocalSource
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.model.SManga
@@ -89,19 +88,19 @@ class LibraryPresenter(
     fun subscribeLibrary() {
         if (librarySubscription.isNullOrUnsubscribed()) {
             librarySubscription = getLibraryObservable()
-                    .combineLatest(downloadTriggerRelay.observeOn(Schedulers.io())) { lib, _ ->
-                        lib.apply { setDownloadCount(mangaMap) }
-                    }
-                    .combineLatest(filterTriggerRelay.observeOn(Schedulers.io())) { lib, _ ->
-                        lib.copy(mangaMap = applyFilters(lib.mangaMap))
-                    }
-                    .combineLatest(sortTriggerRelay.observeOn(Schedulers.io())) { lib, _ ->
-                        lib.copy(mangaMap = applySort(lib.mangaMap))
-                    }
-                    .observeOn(AndroidSchedulers.mainThread())
-                    .subscribeLatestCache({ view, (categories, mangaMap) ->
-                        view.onNextLibraryUpdate(categories, mangaMap)
-                    })
+                .combineLatest(downloadTriggerRelay.observeOn(Schedulers.io())) { lib, _ ->
+                    lib.apply { setDownloadCount(mangaMap) }
+                }
+                .combineLatest(filterTriggerRelay.observeOn(Schedulers.io())) { lib, _ ->
+                    lib.copy(mangaMap = applyFilters(lib.mangaMap))
+                }
+                .combineLatest(sortTriggerRelay.observeOn(Schedulers.io())) { lib, _ ->
+                    lib.copy(mangaMap = applySort(lib.mangaMap))
+                }
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribeLatestCache({ view, (categories, mangaMap) ->
+                    view.onNextLibraryUpdate(categories, mangaMap)
+                })
         }
     }
 
@@ -111,9 +110,9 @@ class LibraryPresenter(
      * @param map the map to filter.
      */
     private fun applyFilters(map: LibraryMap): LibraryMap {
-        val filterDownloaded = preferences.downloadedOnly().get() || preferences.filterDownloaded().getOrDefault()
-        val filterUnread = preferences.filterUnread().getOrDefault()
-        val filterCompleted = preferences.filterCompleted().getOrDefault()
+        val filterDownloaded = preferences.downloadedOnly().get() || preferences.filterDownloaded().get()
+        val filterUnread = preferences.filterUnread().get()
+        val filterCompleted = preferences.filterCompleted().get()
 
         val filterFn: (LibraryItem) -> Boolean = f@{ item ->
             // Filter when there isn't unread chapters.
@@ -150,7 +149,7 @@ class LibraryPresenter(
      * @param map the map of manga.
      */
     private fun setDownloadCount(map: LibraryMap) {
-        if (!preferences.downloadBadge().getOrDefault()) {
+        if (!preferences.downloadBadge().get()) {
             // Unset download count if the preference is not enabled.
             for ((_, itemList) in map) {
                 for (item in itemList) {
@@ -173,7 +172,7 @@ class LibraryPresenter(
      * @param map the map to sort.
      */
     private fun applySort(map: LibraryMap): LibraryMap {
-        val sortingMode = preferences.librarySortingMode().getOrDefault()
+        val sortingMode = preferences.librarySortingMode().get()
 
         val lastReadManga by lazy {
             var counter = 0
@@ -206,19 +205,20 @@ class LibraryPresenter(
                 }
                 LibrarySort.LATEST_CHAPTER -> {
                     val manga1latestChapter = latestChapterManga[i1.manga.id!!]
-                            ?: latestChapterManga.size
+                        ?: latestChapterManga.size
                     val manga2latestChapter = latestChapterManga[i2.manga.id!!]
-                            ?: latestChapterManga.size
+                        ?: latestChapterManga.size
                     manga1latestChapter.compareTo(manga2latestChapter)
                 }
                 else -> throw Exception("Unknown sorting mode")
             }
         }
 
-        val comparator = if (preferences.librarySortingAscending().getOrDefault())
+        val comparator = if (preferences.librarySortingAscending().get()) {
             Comparator(sortFn)
-        else
+        } else {
             Collections.reverseOrder(sortFn)
+        }
 
         return map.mapValues { entry -> entry.value.sortedWith(comparator) }
     }
@@ -230,10 +230,11 @@ class LibraryPresenter(
      */
     private fun getLibraryObservable(): Observable<Library> {
         return Observable.combineLatest(getCategoriesObservable(), getLibraryMangasObservable()) { dbCategories, libraryManga ->
-            val categories = if (libraryManga.containsKey(0))
+            val categories = if (libraryManga.containsKey(0)) {
                 arrayListOf(Category.createDefault()) + dbCategories
-            else
+            } else {
                 dbCategories
+            }
 
             this.categories = categories
             Library(categories, libraryManga)
@@ -258,9 +259,9 @@ class LibraryPresenter(
     private fun getLibraryMangasObservable(): Observable<LibraryMap> {
         val libraryAsList = preferences.libraryAsList()
         return db.getLibraryMangas().asRxObservable()
-                .map { list ->
-                    list.map { LibraryItem(it, libraryAsList) }.groupBy { it.manga.category }
-                }
+            .map { list ->
+                list.map { LibraryItem(it, libraryAsList) }.groupBy { it.manga.category }
+            }
     }
 
     /**
@@ -300,8 +301,8 @@ class LibraryPresenter(
     fun getCommonCategories(mangas: List<Manga>): Collection<Category> {
         if (mangas.isEmpty()) return emptyList()
         return mangas.toSet()
-                .map { db.getCategoriesForManga(it).executeAsBlocking() }
-                .reduce { set1: Iterable<Category>, set2 -> set1.intersect(set2).toMutableList() }
+            .map { db.getCategoriesForManga(it).executeAsBlocking() }
+            .reduce { set1: Iterable<Category>, set2 -> set1.intersect(set2).toMutableList() }
     }
 
     /**
@@ -316,9 +317,9 @@ class LibraryPresenter(
         mangaToDelete.forEach { it.favorite = false }
 
         Observable.fromCallable { db.insertMangas(mangaToDelete).executeAsBlocking() }
-                .onErrorResumeNext { Observable.empty() }
-                .subscribeOn(Schedulers.io())
-                .subscribe()
+            .onErrorResumeNext { Observable.empty() }
+            .subscribeOn(Schedulers.io())
+            .subscribe()
 
         Observable.fromCallable {
             mangaToDelete.forEach { manga ->
@@ -331,8 +332,8 @@ class LibraryPresenter(
                 }
             }
         }
-                .subscribeOn(Schedulers.io())
-                .subscribe()
+            .subscribeOn(Schedulers.io())
+            .subscribe()
     }
 
     /**

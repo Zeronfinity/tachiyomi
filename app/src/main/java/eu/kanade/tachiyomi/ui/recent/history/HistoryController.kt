@@ -22,14 +22,15 @@ import eu.kanade.tachiyomi.util.system.toast
  * Uses [R.layout.history_controller].
  * UI related actions should be called from here.
  */
-class HistoryController : NucleusController<HistoryControllerBinding, HistoryPresenter>(),
-        RootController,
-        NoToolbarElevationController,
-        FlexibleAdapter.OnUpdateListener,
-        HistoryAdapter.OnRemoveClickListener,
-        HistoryAdapter.OnResumeClickListener,
-        HistoryAdapter.OnCoverClickListener,
-        RemoveHistoryDialog.Listener {
+class HistoryController :
+    NucleusController<HistoryControllerBinding, HistoryPresenter>(),
+    RootController,
+    NoToolbarElevationController,
+    FlexibleAdapter.OnUpdateListener,
+    HistoryAdapter.OnRemoveClickListener,
+    HistoryAdapter.OnResumeClickListener,
+    HistoryAdapter.OnItemClickListener,
+    RemoveHistoryDialog.Listener {
 
     /**
      * Adapter containing the recent manga.
@@ -105,7 +106,7 @@ class HistoryController : NucleusController<HistoryControllerBinding, HistoryPre
         RemoveHistoryDialog(this, manga, history).showDialog(router)
     }
 
-    override fun onCoverClick(position: Int) {
+    override fun onItemClick(position: Int) {
         val manga = adapter?.getItem(position)?.mch?.manga ?: return
         router.pushController(MangaController(manga).withFadeTransaction())
     }

@@ -7,7 +7,7 @@ import android.os.Build
 import android.view.ContextThemeWrapper
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
-import eu.kanade.tachiyomi.ui.source.SourcePresenter
+import eu.kanade.tachiyomi.ui.browse.source.SourcePresenter
 import java.util.Locale
 import uy.kohesive.injekt.injectLazy
 
@@ -50,6 +50,7 @@ object LocaleHelper {
     fun getSourceDisplayName(lang: String?, context: Context): String {
         return when (lang) {
             "" -> context.getString(R.string.other_source)
+            SourcePresenter.LAST_USED_KEY -> context.getString(R.string.last_used_source)
             SourcePresenter.PINNED_KEY -> context.getString(R.string.pinned_sources)
             "all" -> context.getString(R.string.all_lang)
             else -> getDisplayName(lang)

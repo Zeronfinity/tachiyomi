@@ -116,14 +116,6 @@ abstract class PagerViewer(val activity: ReaderActivity) : BaseViewer {
     }
 
     /**
-     * Destroys this viewer. Called when leaving the reader or swapping viewers.
-     */
-    override fun destroy() {
-        super.destroy()
-        config.unsubscribe()
-    }
-
-    /**
      * Called when a new page (either a [ReaderPage] or [ChapterTransition]) is marked as active
      */
     private fun onPageChange(position: Int) {
@@ -140,16 +132,16 @@ abstract class PagerViewer(val activity: ReaderActivity) : BaseViewer {
 
     private fun checkAllowPreload(page: ReaderPage?): Boolean {
         // Page is transition page - preload allowed
-        page == null ?: return true
+        page ?: return true
 
         // Initial opening - preload allowed
-        currentPage == null ?: return true
+        currentPage ?: return true
 
         // Allow preload for
         // 1. Going to next chapter from chapter transition
         // 2. Going between pages of same chapter
         // 3. Next chapter page
-        return when (page!!.chapter) {
+        return when (page.chapter) {
             (currentPage as? ChapterTransition.Next)?.to -> true
             (currentPage as? ReaderPage)?.chapter -> true
             adapter.nextTransition?.to -> true
@@ -166,8 +158,8 @@ abstract class PagerViewer(val activity: ReaderActivity) : BaseViewer {
         Timber.d("onReaderPageSelected: ${page.number}/${pages.size}")
         activity.onPageSelected(page)
 
-        // Preload next chapter once we're within the last 3 pages of the current chapter
-        val inPreloadRange = pages.size - page.number < 3
+        // Preload next chapter once we're within the last 5 pages of the current chapter
+        val inPreloadRange = pages.size - page.number < 5
         if (inPreloadRange && allowPreload && page.chapter == adapter.currentChapter) {
             Timber.d("Request preload next chapter because we're at page ${page.number} of ${pages.size}")
             adapter.nextTransition?.to?.let {

@@ -18,7 +18,7 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.DatabaseHelper
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.track.TrackManager
-import eu.kanade.tachiyomi.databinding.MangaControllerBinding
+import eu.kanade.tachiyomi.databinding.PagerControllerBinding
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.ui.base.controller.RxController
@@ -28,17 +28,20 @@ import eu.kanade.tachiyomi.ui.manga.chapter.ChaptersController
 import eu.kanade.tachiyomi.ui.manga.info.MangaInfoController
 import eu.kanade.tachiyomi.ui.manga.track.TrackController
 import eu.kanade.tachiyomi.util.system.toast
+import java.util.Date
 import kotlinx.android.synthetic.main.main_activity.tabs
 import rx.Subscription
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-class MangaController : RxController<MangaControllerBinding>, TabbedController {
+class MangaController : RxController<PagerControllerBinding>, TabbedController {
 
-    constructor(manga: Manga?, fromSource: Boolean = false) : super(Bundle().apply {
-        putLong(MANGA_EXTRA, manga?.id ?: 0)
-        putBoolean(FROM_SOURCE_EXTRA, fromSource)
-    }) {
+    constructor(manga: Manga?, fromSource: Boolean = false) : super(
+        Bundle().apply {
+            putLong(MANGA_EXTRA, manga?.id ?: 0)
+            putBoolean(FROM_SOURCE_EXTRA, fromSource)
+        }
+    ) {
         this.manga = manga
         if (manga != null) {
             source = Injekt.get<SourceManager>().getOrStub(manga.source)
@@ -46,7 +49,8 @@ class MangaController : RxController<MangaControllerBinding>, TabbedController {
     }
 
     constructor(mangaId: Long) : this(
-            Injekt.get<DatabaseHelper>().getManga(mangaId).executeAsBlocking())
+        Injekt.get<DatabaseHelper>().getManga(mangaId).executeAsBlocking()
+    )
 
     @Suppress("unused")
     constructor(bundle: Bundle) : this(bundle.getLong(MANGA_EXTRA))
@@ -61,6 +65,10 @@ class MangaController : RxController<MangaControllerBinding>, TabbedController {
 
     val fromSource = args.getBoolean(FROM_SOURCE_EXTRA, false)
 
+    val lastUpdateRelay: BehaviorRelay<Date> = BehaviorRelay.create()
+
+    val chapterCountRelay: BehaviorRelay<Float> = BehaviorRelay.create()
+
     val mangaFavoriteRelay: PublishRelay<Boolean> = PublishRelay.create()
 
     private val trackingIconRelay: BehaviorRelay<Boolean> = BehaviorRelay.create()
@@ -72,7 +80,7 @@ class MangaController : RxController<MangaControllerBinding>, TabbedController {
     }
 
     override fun inflateView(inflater: LayoutInflater, container: ViewGroup): View {
-        binding = MangaControllerBinding.inflate(inflater)
+        binding = PagerControllerBinding.inflate(inflater)
         return binding.root
     }
 
@@ -84,11 +92,12 @@ class MangaController : RxController<MangaControllerBinding>, TabbedController {
         requestPermissionsSafe(arrayOf(WRITE_EXTERNAL_STORAGE), 301)
 
         adapter = MangaDetailAdapter()
-        binding.mangaPager.offscreenPageLimit = 3
-        binding.mangaPager.adapter = adapter
+        binding.pager.offscreenPageLimit = 3
+        binding.pager.adapter = adapter
 
-        if (!fromSource)
-            binding.mangaPager.currentItem = CHAPTERS_CONTROLLER
+        if (!fromSource) {
+            binding.pager.currentItem = CHAPTERS_CONTROLLER
+        }
     }
 
     override fun onDestroyView(view: View) {
@@ -99,7 +108,7 @@ class MangaController : RxController<MangaControllerBinding>, TabbedController {
     override fun onChangeStarted(handler: ControllerChangeHandler, type: ControllerChangeType) {
         super.onChangeStarted(handler, type)
         if (type.isEnter) {
-            activity?.tabs?.setupWithViewPager(binding.mangaPager)
+            activity?.tabs?.setupWithViewPager(binding.pager)
             trackingIconSubscription = trackingIconRelay.subscribe { setTrackingIconInternal(it) }
         }
     }
@@ -130,9 +139,11 @@ class MangaController : RxController<MangaControllerBinding>, TabbedController {
 
     private fun setTrackingIconInternal(visible: Boolean) {
         val tab = activity?.tabs?.getTabAt(TRACK_CONTROLLER) ?: return
-        val drawable = if (visible)
+        val drawable = if (visible) {
             VectorDrawableCompat.create(resources!!, R.drawable.ic_done_white_18dp, null)
-        else null
+        } else {
+            null
+        }
 
         tab.icon = drawable
     }
@@ -142,10 +153,11 @@ class MangaController : RxController<MangaControllerBinding>, TabbedController {
         private val tabCount = if (Injekt.get<TrackManager>().hasLoggedServices()) 3 else 2
 
         private val tabTitles = listOf(
-                R.string.manga_detail_tab,
-                R.string.manga_chapters_tab,
-                R.string.manga_tracking_tab)
-                .map { resources!!.getString(it) }
+            R.string.manga_detail_tab,
+            R.string.manga_chapters_tab,
+            R.string.manga_tracking_tab
+        )
+            .map { resources!!.getString(it) }
 
         override fun getCount(): Int {
             return tabCount

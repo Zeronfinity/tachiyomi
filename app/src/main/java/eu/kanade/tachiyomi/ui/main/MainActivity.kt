@@ -1,16 +1,21 @@
 package eu.kanade.tachiyomi.ui.main
 
+import android.app.Activity
 import android.app.SearchManager
 import android.content.Intent
 import android.os.Bundle
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
-import androidx.lifecycle.lifecycleScope
+import androidx.coordinatorlayout.widget.CoordinatorLayout
 import com.bluelinelabs.conductor.Conductor
 import com.bluelinelabs.conductor.Controller
 import com.bluelinelabs.conductor.ControllerChangeHandler
 import com.bluelinelabs.conductor.Router
 import com.bluelinelabs.conductor.RouterTransaction
+import com.google.android.material.appbar.AppBarLayout
+import com.google.android.material.behavior.HideBottomViewOnScrollBehavior
+import com.google.android.material.tabs.TabLayout
 import eu.kanade.tachiyomi.Migrations
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
@@ -22,15 +27,14 @@ import eu.kanade.tachiyomi.ui.base.controller.NoToolbarElevationController
 import eu.kanade.tachiyomi.ui.base.controller.RootController
 import eu.kanade.tachiyomi.ui.base.controller.TabbedController
 import eu.kanade.tachiyomi.ui.base.controller.withFadeTransaction
+import eu.kanade.tachiyomi.ui.browse.BrowseController
+import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchController
 import eu.kanade.tachiyomi.ui.download.DownloadController
-import eu.kanade.tachiyomi.ui.extension.ExtensionController
 import eu.kanade.tachiyomi.ui.library.LibraryController
 import eu.kanade.tachiyomi.ui.manga.MangaController
 import eu.kanade.tachiyomi.ui.more.MoreController
 import eu.kanade.tachiyomi.ui.recent.history.HistoryController
 import eu.kanade.tachiyomi.ui.recent.updates.UpdatesController
-import eu.kanade.tachiyomi.ui.source.SourceController
-import eu.kanade.tachiyomi.ui.source.global_search.GlobalSearchController
 import eu.kanade.tachiyomi.util.lang.launchUI
 import eu.kanade.tachiyomi.util.system.WebViewUtil
 import eu.kanade.tachiyomi.util.system.toast
@@ -96,7 +100,7 @@ class MainActivity : BaseActivity<MainActivityBinding>() {
                     R.id.nav_library -> setRoot(LibraryController(), id)
                     R.id.nav_updates -> setRoot(UpdatesController(), id)
                     R.id.nav_history -> setRoot(HistoryController(), id)
-                    R.id.nav_sources -> setRoot(SourceController(), id)
+                    R.id.nav_browse -> setRoot(BrowseController(), id)
                     R.id.nav_more -> setRoot(MoreController(), id)
                 }
             } else if (!isHandlingShortcut) {
@@ -157,7 +161,7 @@ class MainActivity : BaseActivity<MainActivityBinding>() {
         setExtensionsBadge()
         preferences.extensionUpdatesCount().asFlow()
             .onEach { setExtensionsBadge() }
-            .launchIn(lifecycleScope)
+            .launchIn(scope)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -174,9 +178,9 @@ class MainActivity : BaseActivity<MainActivityBinding>() {
     private fun setExtensionsBadge() {
         val updates = preferences.extensionUpdatesCount().get()
         if (updates > 0) {
-            binding.bottomNav.getOrCreateBadge(R.id.nav_more).number = updates
+            binding.bottomNav.getOrCreateBadge(R.id.nav_browse).number = updates
         } else {
-            binding.bottomNav.removeBadge(R.id.nav_more)
+            binding.bottomNav.removeBadge(R.id.nav_browse)
         }
     }
 
@@ -209,13 +213,13 @@ class MainActivity : BaseActivity<MainActivityBinding>() {
             SHORTCUT_LIBRARY -> setSelectedNavItem(R.id.nav_library)
             SHORTCUT_RECENTLY_UPDATED -> setSelectedNavItem(R.id.nav_updates)
             SHORTCUT_RECENTLY_READ -> setSelectedNavItem(R.id.nav_history)
-            SHORTCUT_CATALOGUES -> setSelectedNavItem(R.id.nav_sources)
+            SHORTCUT_CATALOGUES -> setSelectedNavItem(R.id.nav_browse)
             SHORTCUT_EXTENSIONS -> {
                 if (router.backstackSize > 1) {
                     router.popToRoot()
                 }
-                setSelectedNavItem(R.id.nav_more)
-                router.pushController(ExtensionController().withFadeTransaction())
+                setSelectedNavItem(R.id.nav_browse)
+                router.pushController(BrowseController(true).withFadeTransaction())
             }
             SHORTCUT_MANGA -> {
                 val extras = intent.extras ?: return false
@@ -320,11 +324,15 @@ class MainActivity : BaseActivity<MainActivityBinding>() {
 
         supportActionBar?.setDisplayHomeAsUpEnabled(router.backstackSize != 1)
 
+        // Always show appbar again when changing controllers
+        binding.appbar.setExpanded(true)
+
         if ((from == null || from is RootController) && to !is RootController) {
-            bottomNavAnimator.collapse()
+            showBottomNav(visible = false, collapse = true)
         }
-        if (to is RootController && from !is RootController) {
-            bottomNavAnimator.expand()
+        if (to is RootController) {
+            // Always show bottom nav again when returning to a RootController
+            showBottomNav(visible = true, collapse = from !is RootController)
         }
 
         if (from is TabbedController) {
@@ -345,6 +353,24 @@ class MainActivity : BaseActivity<MainActivityBinding>() {
         }
     }
 
+    fun showBottomNav(visible: Boolean, collapse: Boolean = false) {
+        val layoutParams = binding.bottomNav.layoutParams as CoordinatorLayout.LayoutParams
+        val bottomViewNavigationBehavior = layoutParams.behavior as HideBottomViewOnScrollBehavior
+        if (visible) {
+            if (collapse) {
+                bottomNavAnimator.expand()
+            }
+
+            bottomViewNavigationBehavior.slideUp(binding.bottomNav)
+        } else {
+            if (collapse) {
+                bottomNavAnimator.collapse()
+            }
+
+            bottomViewNavigationBehavior.slideDown(binding.bottomNav)
+        }
+    }
+
     companion object {
         // Shortcut actions
         const val SHORTCUT_LIBRARY = "eu.kanade.tachiyomi.SHOW_LIBRARY"
@@ -359,4 +385,19 @@ class MainActivity : BaseActivity<MainActivityBinding>() {
         const val INTENT_SEARCH_QUERY = "query"
         const val INTENT_SEARCH_FILTER = "filter"
     }
+}
+
+/**
+ * Used to manually offset a FAB within child views that might be cut off due to the collapsing
+ * AppBarLayout.
+ */
+fun View.offsetFabAppbarHeight(activity: Activity) {
+    val appbar: AppBarLayout = activity.findViewById(R.id.appbar)
+    val tabs: TabLayout = activity.findViewById(R.id.tabs)
+    appbar.addOnOffsetChangedListener(
+        AppBarLayout.OnOffsetChangedListener { appBarLayout, verticalOffset ->
+            val maxAbsOffset = appBarLayout.measuredHeight - tabs.measuredHeight
+            translationY = -maxAbsOffset - verticalOffset.toFloat()
+        }
+    )
 }

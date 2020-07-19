@@ -22,11 +22,13 @@ import eu.kanade.tachiyomi.ui.base.controller.NoToolbarElevationController
 import eu.kanade.tachiyomi.ui.base.controller.NucleusController
 import eu.kanade.tachiyomi.ui.base.controller.RootController
 import eu.kanade.tachiyomi.ui.base.controller.withFadeTransaction
+import eu.kanade.tachiyomi.ui.main.MainActivity
+import eu.kanade.tachiyomi.ui.main.offsetFabAppbarHeight
 import eu.kanade.tachiyomi.ui.manga.MangaController
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
-import eu.kanade.tachiyomi.util.lang.launchInUI
 import eu.kanade.tachiyomi.util.system.notificationManager
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import reactivecircus.flowbinding.recyclerview.scrollStateChanges
 import reactivecircus.flowbinding.swiperefreshlayout.refreshes
@@ -37,15 +39,16 @@ import timber.log.Timber
  * Uses [R.layout.updates_controller].
  * UI related actions should be called from here.
  */
-class UpdatesController : NucleusController<UpdatesControllerBinding, UpdatesPresenter>(),
-        RootController,
-        NoToolbarElevationController,
-        ActionMode.Callback,
-        FlexibleAdapter.OnItemClickListener,
-        FlexibleAdapter.OnItemLongClickListener,
-        FlexibleAdapter.OnUpdateListener,
-        ConfirmDeleteChaptersDialog.Listener,
-        UpdatesAdapter.OnCoverClickListener {
+class UpdatesController :
+    NucleusController<UpdatesControllerBinding, UpdatesPresenter>(),
+    RootController,
+    NoToolbarElevationController,
+    ActionMode.Callback,
+    FlexibleAdapter.OnItemClickListener,
+    FlexibleAdapter.OnItemLongClickListener,
+    FlexibleAdapter.OnUpdateListener,
+    ConfirmDeleteChaptersDialog.Listener,
+    UpdatesAdapter.OnCoverClickListener {
 
     /**
      * Action mode for multiple selection.
@@ -97,7 +100,7 @@ class UpdatesController : NucleusController<UpdatesControllerBinding, UpdatesPre
                 val firstPos = layoutManager.findFirstCompletelyVisibleItemPosition()
                 binding.swipeRefresh.isEnabled = firstPos <= 0
             }
-            .launchInUI()
+            .launchIn(scope)
 
         binding.swipeRefresh.setDistanceToTriggerSync((2 * 64 * view.resources.displayMetrics.density).toInt())
         binding.swipeRefresh.refreshes()
@@ -107,7 +110,9 @@ class UpdatesController : NucleusController<UpdatesControllerBinding, UpdatesPre
                 // It can be a very long operation, so we disable swipe refresh and show a toast.
                 binding.swipeRefresh.isRefreshing = false
             }
-            .launchInUI()
+            .launchIn(scope)
+
+        binding.actionToolbar.offsetFabAppbarHeight(activity!!)
     }
 
     override fun onDestroyView(view: View) {
@@ -172,9 +177,10 @@ class UpdatesController : NucleusController<UpdatesControllerBinding, UpdatesPre
         if (actionMode == null) {
             actionMode = (activity as AppCompatActivity).startSupportActionMode(this)
             binding.actionToolbar.show(
-                    actionMode!!,
-                    R.menu.updates_chapter_selection
+                actionMode!!,
+                R.menu.updates_chapter_selection
             ) { onActionItemClicked(actionMode!!, it!!) }
+            (activity as? MainActivity)?.showBottomNav(visible = false, collapse = true)
         }
 
         toggleSelection(position)
@@ -264,9 +270,6 @@ class UpdatesController : NucleusController<UpdatesControllerBinding, UpdatesPre
         presenter.deleteChapters(chaptersToDelete)
     }
 
-    /**
-     * Destory [ActionMode] if it's shown
-     */
     private fun destroyActionModeIfNeeded() {
         actionMode?.finish()
     }
@@ -334,7 +337,8 @@ class UpdatesController : NucleusController<UpdatesControllerBinding, UpdatesPre
             R.id.action_select_all -> selectAll()
             R.id.action_select_inverse -> selectInverse()
             R.id.action_download -> downloadChapters(getSelectedChapters())
-            R.id.action_delete -> ConfirmDeleteChaptersDialog(this, getSelectedChapters())
+            R.id.action_delete ->
+                ConfirmDeleteChaptersDialog(this, getSelectedChapters())
                     .showDialog(router)
             R.id.action_mark_as_read -> markAsRead(getSelectedChapters())
             R.id.action_mark_as_unread -> markAsUnread(getSelectedChapters())
@@ -348,9 +352,12 @@ class UpdatesController : NucleusController<UpdatesControllerBinding, UpdatesPre
      * @param mode the ActionMode object
      */
     override fun onDestroyActionMode(mode: ActionMode?) {
-        binding.actionToolbar.hide()
         adapter?.mode = SelectableAdapter.Mode.IDLE
         adapter?.clearSelection()
+
+        binding.actionToolbar.hide()
+        (activity as? MainActivity)?.showBottomNav(visible = true, collapse = true)
+
         actionMode = null
     }
 

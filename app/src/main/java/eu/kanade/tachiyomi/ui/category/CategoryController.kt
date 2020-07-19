@@ -17,22 +17,24 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.Category
 import eu.kanade.tachiyomi.databinding.CategoriesControllerBinding
 import eu.kanade.tachiyomi.ui.base.controller.NucleusController
-import eu.kanade.tachiyomi.util.lang.launchInUI
+import eu.kanade.tachiyomi.ui.main.offsetFabAppbarHeight
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import reactivecircus.flowbinding.android.view.clicks
 
 /**
  * Controller to manage the categories for the users' library.
  */
-class CategoryController : NucleusController<CategoriesControllerBinding, CategoryPresenter>(),
-        ActionMode.Callback,
-        FlexibleAdapter.OnItemClickListener,
-        FlexibleAdapter.OnItemLongClickListener,
-        CategoryAdapter.OnItemReleaseListener,
-        CategoryCreateDialog.Listener,
-        CategoryRenameDialog.Listener,
-        UndoHelper.OnActionListener {
+class CategoryController :
+    NucleusController<CategoriesControllerBinding, CategoryPresenter>(),
+    ActionMode.Callback,
+    FlexibleAdapter.OnItemClickListener,
+    FlexibleAdapter.OnItemLongClickListener,
+    CategoryAdapter.OnItemReleaseListener,
+    CategoryCreateDialog.Listener,
+    CategoryRenameDialog.Listener,
+    UndoHelper.OnActionListener {
 
     /**
      * Object used to show ActionMode toolbar.
@@ -91,7 +93,9 @@ class CategoryController : NucleusController<CategoriesControllerBinding, Catego
             .onEach {
                 CategoryCreateDialog(this@CategoryController).showDialog(router, null)
             }
-            .launchInUI()
+            .launchIn(scope)
+
+        binding.fab.offsetFabAppbarHeight(activity!!)
     }
 
     /**
@@ -176,8 +180,10 @@ class CategoryController : NucleusController<CategoriesControllerBinding, Catego
         when (item.itemId) {
             R.id.action_delete -> {
                 undoHelper = UndoHelper(adapter, this)
-                undoHelper?.start(adapter.selectedPositions, view!!,
-                        R.string.snack_categories_deleted, R.string.action_undo, 3000)
+                undoHelper?.start(
+                    adapter.selectedPositions, view!!,
+                    R.string.snack_categories_deleted, R.string.action_undo, 3000
+                )
 
                 mode.finish()
             }

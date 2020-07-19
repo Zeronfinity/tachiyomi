@@ -9,11 +9,13 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Resources
+import android.graphics.Color
 import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.PowerManager
 import android.widget.Toast
 import androidx.annotation.AttrRes
+import androidx.annotation.ColorInt
 import androidx.annotation.StringRes
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.app.NotificationCompat
@@ -22,6 +24,7 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.nononsenseapps.filepicker.FilePickerActivity
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.widget.CustomLayoutPickerActivity
+import kotlin.math.roundToInt
 
 /**
  * Display a toast in this context.
@@ -52,7 +55,7 @@ fun Context.toast(text: String?, duration: Int = Toast.LENGTH_SHORT) {
  */
 fun Context.notificationBuilder(channelId: String, block: (NotificationCompat.Builder.() -> Unit)? = null): NotificationCompat.Builder {
     val builder = NotificationCompat.Builder(this, channelId)
-            .setColor(ContextCompat.getColor(this, R.color.colorPrimary))
+        .setColor(ContextCompat.getColor(this, R.color.colorPrimary))
     if (block != null) {
         builder.block()
     }
@@ -78,10 +81,10 @@ fun Context.notification(channelId: String, block: (NotificationCompat.Builder.(
  */
 fun Context.getFilePicker(currentDir: String): Intent {
     return Intent(this, CustomLayoutPickerActivity::class.java)
-            .putExtra(FilePickerActivity.EXTRA_ALLOW_MULTIPLE, false)
-            .putExtra(FilePickerActivity.EXTRA_ALLOW_CREATE_DIR, true)
-            .putExtra(FilePickerActivity.EXTRA_MODE, FilePickerActivity.MODE_DIR)
-            .putExtra(FilePickerActivity.EXTRA_START_PATH, currentDir)
+        .putExtra(FilePickerActivity.EXTRA_ALLOW_MULTIPLE, false)
+        .putExtra(FilePickerActivity.EXTRA_ALLOW_CREATE_DIR, true)
+        .putExtra(FilePickerActivity.EXTRA_MODE, FilePickerActivity.MODE_DIR)
+        .putExtra(FilePickerActivity.EXTRA_START_PATH, currentDir)
 }
 
 /**
@@ -96,12 +99,22 @@ fun Context.hasPermission(permission: String) = ContextCompat.checkSelfPermissio
  * Returns the color for the given attribute.
  *
  * @param resource the attribute.
+ * @param alphaFactor the alpha number [0,1].
  */
-fun Context.getResourceColor(@AttrRes resource: Int): Int {
+@ColorInt fun Context.getResourceColor(@AttrRes resource: Int, alphaFactor: Float = 1f): Int {
     val typedArray = obtainStyledAttributes(intArrayOf(resource))
-    val attrValue = typedArray.getColor(0, 0)
+    val color = typedArray.getColor(0, 0)
     typedArray.recycle()
-    return attrValue
+
+    if (alphaFactor < 1f) {
+        val alpha = (Color.alpha(color) * alphaFactor).roundToInt()
+        val red = Color.red(color)
+        val green = Color.green(color)
+        val blue = Color.blue(color)
+        return Color.argb(alpha, red, green, blue)
+    }
+
+    return color
 }
 
 /**
@@ -178,7 +191,7 @@ fun Context.isServiceRunning(serviceClass: Class<*>): Boolean {
     val manager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
     @Suppress("DEPRECATION")
     return manager.getRunningServices(Integer.MAX_VALUE)
-            .any { className == it.service.className }
+        .any { className == it.service.className }
 }
 
 /**
@@ -188,8 +201,8 @@ fun Context.openInBrowser(url: String) {
     try {
         val parsedUrl = Uri.parse(url)
         val intent = CustomTabsIntent.Builder()
-                .setToolbarColor(getResourceColor(R.attr.colorPrimary))
-                .build()
+            .setToolbarColor(getResourceColor(R.attr.colorPrimary))
+            .build()
         intent.launchUrl(this, parsedUrl)
     } catch (e: Exception) {
         toast(e.message)

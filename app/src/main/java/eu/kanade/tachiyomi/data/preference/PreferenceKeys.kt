@@ -109,8 +109,6 @@ object PreferenceKeys {
 
     const val librarySortingMode = "library_sorting_mode"
 
-    const val automaticUpdates = "automatic_updates"
-
     const val automaticExtUpdates = "automatic_ext_updates"
 
     const val startScreen = "start_screen"
@@ -144,6 +142,8 @@ object PreferenceKeys {
     const val downloadBadge = "display_download_badge"
 
     const val alwaysShowChapterTransition = "always_show_chapter_transition"
+
+    const val searchPinnedSourcesOnly = "search_pinned_sources_only"
 
     fun trackUsername(syncId: Int) = "pref_mangasync_username_$syncId"
 

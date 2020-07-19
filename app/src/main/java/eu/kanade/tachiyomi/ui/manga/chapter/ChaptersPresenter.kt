@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.manga.chapter
 
 import android.os.Bundle
+import com.jakewharton.rxrelay.BehaviorRelay
 import com.jakewharton.rxrelay.PublishRelay
 import eu.kanade.tachiyomi.data.database.DatabaseHelper
 import eu.kanade.tachiyomi.data.database.models.Chapter
@@ -13,6 +14,7 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.ui.base.presenter.BasePresenter
 import eu.kanade.tachiyomi.util.chapter.syncChaptersWithSource
 import eu.kanade.tachiyomi.util.lang.isNullOrUnsubscribed
+import java.util.Date
 import rx.Observable
 import rx.Subscription
 import rx.android.schedulers.AndroidSchedulers
@@ -27,6 +29,8 @@ import uy.kohesive.injekt.api.get
 class ChaptersPresenter(
     val manga: Manga,
     val source: Source,
+    private val chapterCountRelay: BehaviorRelay<Float>,
+    private val lastUpdateRelay: BehaviorRelay<Date>,
     private val mangaFavoriteRelay: PublishRelay<Boolean>,
     val preferences: PreferencesHelper = Injekt.get(),
     private val db: DatabaseHelper = Injekt.get(),
@@ -43,7 +47,7 @@ class ChaptersPresenter(
      * Subject of list of chapters to allow updating the view without going to DB.
      */
     val chaptersRelay: PublishRelay<List<ChapterItem>>
-            by lazy { PublishRelay.create<List<ChapterItem>>() }
+    by lazy { PublishRelay.create<List<ChapterItem>>() }
 
     /**
      * Whether the chapter list has been requested to the source.
@@ -66,12 +70,13 @@ class ChaptersPresenter(
 
         // Prepare the relay.
         chaptersRelay.flatMap { applyChapterFilters(it) }
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeLatestCache(ChaptersController::onNextChapters) { _, error -> Timber.e(error) }
+            .observeOn(AndroidSchedulers.mainThread())
+            .subscribeLatestCache(ChaptersController::onNextChapters) { _, error -> Timber.e(error) }
 
         // Add the subscription that retrieves the chapters from the database, keeps subscribed to
         // changes, and sends the list of chapters to the relay.
-        add(db.getChapters(manga).asRxObservable()
+        add(
+            db.getChapters(manga).asRxObservable()
                 .map { chapters ->
                     // Convert every chapter to a model.
                     chapters.map { it.toModel() }
@@ -85,19 +90,34 @@ class ChaptersPresenter(
 
                     // Listen for download status changes
                     observeDownloads()
+
+                    // Emit the number of chapters to the info tab.
+                    chapterCountRelay.call(
+                        chapters.maxBy { it.chapter_number }?.chapter_number
+                            ?: 0f
+                    )
+
+                    // Emit the upload date of the most recent chapter
+                    lastUpdateRelay.call(
+                        Date(
+                            chapters.maxBy { it.date_upload }?.date_upload
+                                ?: 0
+                        )
+                    )
                 }
-                .subscribe { chaptersRelay.call(it) })
+                .subscribe { chaptersRelay.call(it) }
+        )
     }
 
     private fun observeDownloads() {
         observeDownloadsSubscription?.let { remove(it) }
         observeDownloadsSubscription = downloadManager.queue.getStatusObservable()
-                .observeOn(AndroidSchedulers.mainThread())
-                .filter { download -> download.manga.id == manga.id }
-                .doOnNext { onDownloadStatusChange(it) }
-                .subscribeLatestCache(ChaptersController::onChapterStatusChange) { _, error ->
-                    Timber.e(error)
-                }
+            .observeOn(AndroidSchedulers.mainThread())
+            .filter { download -> download.manga.id == manga.id }
+            .doOnNext { onDownloadStatusChange(it) }
+            .subscribeLatestCache(ChaptersController::onChapterStatusChange) { _, error ->
+                Timber.e(error)
+            }
     }
 
     /**
@@ -138,12 +158,15 @@ class ChaptersPresenter(
 
         if (!fetchChaptersSubscription.isNullOrUnsubscribed()) return
         fetchChaptersSubscription = Observable.defer { source.fetchChapterList(manga) }
-                .subscribeOn(Schedulers.io())
-                .map { syncChaptersWithSource(db, it, manga, source) }
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeFirst({ view, _ ->
+            .subscribeOn(Schedulers.io())
+            .map { syncChaptersWithSource(db, it, manga, source) }
+            .observeOn(AndroidSchedulers.mainThread())
+            .subscribeFirst(
+                { view, _ ->
                     view.onFetchChaptersDone()
-                }, ChaptersController::onFetchChaptersError)
+                },
+                ChaptersController::onFetchChaptersError
+            )
     }
 
     /**
@@ -200,8 +223,9 @@ class ChaptersPresenter(
         }
 
         // Force UI update if downloaded filter active and download finished.
-        if (onlyDownloaded() && download.status == Download.DOWNLOADED)
+        if (onlyDownloaded() && download.status == Download.DOWNLOADED) {
             refreshChapters()
+        }
     }
 
     /**
@@ -218,16 +242,16 @@ class ChaptersPresenter(
      */
     fun markChaptersRead(selectedChapters: List<ChapterItem>, read: Boolean) {
         Observable.from(selectedChapters)
-                .doOnNext { chapter ->
-                    chapter.read = read
-                    if (!read) {
-                        chapter.last_page_read = 0
-                    }
+            .doOnNext { chapter ->
+                chapter.read = read
+                if (!read) {
+                    chapter.last_page_read = 0
                 }
-                .toList()
-                .flatMap { db.updateChaptersProgress(it).asRxObservable() }
-                .subscribeOn(Schedulers.io())
-                .subscribe()
+            }
+            .toList()
+            .flatMap { db.updateChaptersProgress(it).asRxObservable() }
+            .subscribeOn(Schedulers.io())
+            .subscribe()
     }
 
     /**
@@ -244,13 +268,13 @@ class ChaptersPresenter(
      */
     fun bookmarkChapters(selectedChapters: List<ChapterItem>, bookmarked: Boolean) {
         Observable.from(selectedChapters)
-                .doOnNext { chapter ->
-                    chapter.bookmark = bookmarked
-                }
-                .toList()
-                .flatMap { db.updateChaptersProgress(it).asRxObservable() }
-                .subscribeOn(Schedulers.io())
-                .subscribe()
+            .doOnNext { chapter ->
+                chapter.bookmark = bookmarked
+            }
+            .toList()
+            .flatMap { db.updateChaptersProgress(it).asRxObservable() }
+            .subscribeOn(Schedulers.io())
+            .subscribe()
     }
 
     /**
@@ -259,13 +283,16 @@ class ChaptersPresenter(
      */
     fun deleteChapters(chapters: List<ChapterItem>) {
         Observable.just(chapters)
-                .doOnNext { deleteChaptersInternal(chapters) }
-                .doOnNext { if (onlyDownloaded()) refreshChapters() }
-                .subscribeOn(Schedulers.io())
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribeFirst({ view, _ ->
+            .doOnNext { deleteChaptersInternal(chapters) }
+            .doOnNext { if (onlyDownloaded()) refreshChapters() }
+            .subscribeOn(Schedulers.io())
+            .observeOn(AndroidSchedulers.mainThread())
+            .subscribeFirst(
+                { view, _ ->
                     view.onChaptersDeleted(chapters)
-                }, ChaptersController::onChaptersDeletedError)
+                },
+                ChaptersController::onChaptersDeletedError
+            )
     }
 
     /**
@@ -370,7 +397,7 @@ class ChaptersPresenter(
      * Whether downloaded only mode is enabled.
      */
     fun forceDownloaded(): Boolean {
-        return preferences.downloadedOnly().get()
+        return manga.favorite && preferences.downloadedOnly().get()
     }
 
     /**

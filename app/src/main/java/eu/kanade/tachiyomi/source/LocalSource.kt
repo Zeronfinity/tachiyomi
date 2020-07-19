@@ -30,11 +30,13 @@ import timber.log.Timber
 
 class LocalSource(private val context: Context) : CatalogueSource {
     companion object {
-        private val COVER_NAME = "cover.jpg"
+        const val HELP_URL = "https://tachiyomi.org/help/guides/reading-local-manga/"
+
+        private const val COVER_NAME = "cover.jpg"
         private val POPULAR_FILTERS = FilterList(OrderBy())
         private val LATEST_FILTERS = FilterList(OrderBy().apply { state = Filter.Sort.Selection(1, false) })
         private val LATEST_THRESHOLD = TimeUnit.MILLISECONDS.convert(7, TimeUnit.DAYS)
-        val ID = 0L
+        const val ID = 0L
 
         fun updateCover(context: Context, manga: SManga, input: InputStream): File? {
             val dir = getBaseDirectories(context).firstOrNull()
@@ -74,23 +76,25 @@ class LocalSource(private val context: Context) : CatalogueSource {
 
         val time = if (filters === LATEST_FILTERS) System.currentTimeMillis() - LATEST_THRESHOLD else 0L
         var mangaDirs = baseDirs.mapNotNull { it.listFiles()?.toList() }
-                .flatten()
-                .filter { it.isDirectory && if (time == 0L) it.name.contains(query, ignoreCase = true) else it.lastModified() >= time }
-                .distinctBy { it.name }
+            .flatten()
+            .filter { it.isDirectory && if (time == 0L) it.name.contains(query, ignoreCase = true) else it.lastModified() >= time }
+            .distinctBy { it.name }
 
         val state = ((if (filters.isEmpty()) POPULAR_FILTERS else filters)[0] as OrderBy).state
         when (state?.index) {
             0 -> {
-                mangaDirs = if (state.ascending)
+                mangaDirs = if (state.ascending) {
                     mangaDirs.sortedBy { it.name.toLowerCase(Locale.ENGLISH) }
-                else
+                } else {
                     mangaDirs.sortedByDescending { it.name.toLowerCase(Locale.ENGLISH) }
+                }
             }
             1 -> {
-                mangaDirs = if (state.ascending)
+                mangaDirs = if (state.ascending) {
                     mangaDirs.sortedBy(File::lastModified)
-                else
+                } else {
                     mangaDirs.sortedByDescending(File::lastModified)
+                }
             }
         }
 
@@ -108,12 +112,20 @@ class LocalSource(private val context: Context) : CatalogueSource {
                     }
                 }
 
-                // Copy the cover from the first chapter found.
-                if (thumbnail_url == null) {
-                    val chapters = fetchChapterList(this).toBlocking().first()
-                    if (chapters.isNotEmpty()) {
+                val chapters = fetchChapterList(this).toBlocking().first()
+                if (chapters.isNotEmpty()) {
+                    val chapter = chapters.last()
+                    val format = getFormat(chapter)
+                    if (format is Format.Epub) {
+                        EpubFile(format.file).use { epub ->
+                            epub.fillMangaMetadata(this)
+                        }
+                    }
+
+                    // Copy the cover from the first chapter found.
+                    if (thumbnail_url == null) {
                         try {
-                            val dest = updateCover(chapters.last(), this)
+                            val dest = updateCover(chapter, this)
                             thumbnail_url = dest?.absolutePath
                         } catch (e: Exception) {
                             Timber.e(e)
@@ -129,49 +141,93 @@ class LocalSource(private val context: Context) : CatalogueSource {
 
     override fun fetchMangaDetails(manga: SManga): Observable<SManga> {
         getBaseDirectories(context)
-                .mapNotNull { File(it, manga.url).listFiles()?.toList() }
-                .flatten()
-                .firstOrNull { it.extension == "json" }
-                ?.apply {
-                    val json = Gson().fromJson(Scanner(this).useDelimiter("\\Z").next(), JsonObject::class.java)
-                    manga.title = json["title"]?.asString ?: manga.title
-                    manga.author = json["author"]?.asString ?: manga.author
-                    manga.artist = json["artist"]?.asString ?: manga.artist
-                    manga.description = json["description"]?.asString ?: manga.description
-                    manga.genre = json["genre"]?.asJsonArray?.joinToString(", ") { it.asString }
-                            ?: manga.genre
-                    manga.status = json["status"]?.asInt ?: manga.status
-                }
+            .mapNotNull { File(it, manga.url).listFiles()?.toList() }
+            .flatten()
+            .firstOrNull { it.extension == "json" }
+            ?.apply {
+                val json = Gson().fromJson(Scanner(this).useDelimiter("\\Z").next(), JsonObject::class.java)
+                manga.title = json["title"]?.asString ?: manga.title
+                manga.author = json["author"]?.asString ?: manga.author
+                manga.artist = json["artist"]?.asString ?: manga.artist
+                manga.description = json["description"]?.asString ?: manga.description
+                manga.genre = json["genre"]?.asJsonArray?.joinToString(", ") { it.asString }
+                    ?: manga.genre
+                manga.status = json["status"]?.asInt ?: manga.status
+            }
         return Observable.just(manga)
     }
 
     override fun fetchChapterList(manga: SManga): Observable<List<SChapter>> {
         val chapters = getBaseDirectories(context)
-                .asSequence()
-                .mapNotNull { File(it, manga.url).listFiles()?.toList() }
-                .flatten()
-                .filter { it.isDirectory || isSupportedFile(it.extension) }
-                .map { chapterFile ->
-                    SChapter.create().apply {
-                        url = "${manga.url}/${chapterFile.name}"
-                        val chapName = if (chapterFile.isDirectory) {
-                            chapterFile.name
-                        } else {
-                            chapterFile.nameWithoutExtension
-                        }
-                        val chapNameCut = chapName.replace(manga.title, "", true).trim(' ', '-', '_')
-                        name = if (chapNameCut.isEmpty()) chapName else chapNameCut
-                        date_upload = chapterFile.lastModified()
-                        ChapterRecognition.parseChapterNumber(this, manga)
+            .asSequence()
+            .mapNotNull { File(it, manga.url).listFiles()?.toList() }
+            .flatten()
+            .filter { it.isDirectory || isSupportedFile(it.extension) }
+            .map { chapterFile ->
+                SChapter.create().apply {
+                    url = "${manga.url}/${chapterFile.name}"
+                    name = if (chapterFile.isDirectory) {
+                        chapterFile.name
+                    } else {
+                        chapterFile.nameWithoutExtension
                     }
+                    date_upload = chapterFile.lastModified()
+
+                    val format = getFormat(this)
+                    if (format is Format.Epub) {
+                        EpubFile(format.file).use { epub ->
+                            epub.fillChapterMetadata(this)
+                        }
+                    }
+
+                    val chapNameCut = stripMangaTitle(name, manga.title)
+                    if (chapNameCut.isNotEmpty()) name = chapNameCut
+                    ChapterRecognition.parseChapterNumber(this, manga)
                 }
-                .sortedWith(Comparator { c1, c2 ->
+            }
+            .sortedWith(
+                Comparator { c1, c2 ->
                     val c = c2.chapter_number.compareTo(c1.chapter_number)
                     if (c == 0) c2.name.compareToCaseInsensitiveNaturalOrder(c1.name) else c
-                })
-                .toList()
+                }
+            )
+            .toList()
 
         return Observable.just(chapters)
+    }
+
+    /**
+     * Strips the manga title from a chapter name, matching only based on alphanumeric and whitespace
+     * characters.
+     */
+    private fun stripMangaTitle(chapterName: String, mangaTitle: String): String {
+        var chapterNameIndex = 0
+        var mangaTitleIndex = 0
+        while (chapterNameIndex < chapterName.length && mangaTitleIndex < mangaTitle.length) {
+            val chapterChar = chapterName.get(chapterNameIndex)
+            val mangaChar = mangaTitle.get(mangaTitleIndex)
+            if (!chapterChar.equals(mangaChar, true)) {
+                val invalidChapterChar = !chapterChar.isLetterOrDigit() && !chapterChar.isWhitespace()
+                val invalidMangaChar = !mangaChar.isLetterOrDigit() && !mangaChar.isWhitespace()
+
+                if (!invalidChapterChar && !invalidMangaChar) {
+                    return chapterName
+                }
+
+                if (invalidChapterChar) {
+                    chapterNameIndex++
+                }
+
+                if (invalidMangaChar) {
+                    mangaTitleIndex++
+                }
+            } else {
+                chapterNameIndex++
+                mangaTitleIndex++
+            }
+        }
+
+        return chapterName.substring(chapterNameIndex).trimStart(' ', '-', '_', ',', ':')
     }
 
     override fun fetchPageList(chapter: SChapter): Observable<List<Page>> {
@@ -213,16 +269,16 @@ class LocalSource(private val context: Context) : CatalogueSource {
         return when (val format = getFormat(chapter)) {
             is Format.Directory -> {
                 val entry = format.file.listFiles()
-                        .sortedWith(Comparator<File> { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) })
-                        .find { !it.isDirectory && ImageUtil.isImage(it.name) { FileInputStream(it) } }
+                    .sortedWith(Comparator<File> { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) })
+                    .find { !it.isDirectory && ImageUtil.isImage(it.name) { FileInputStream(it) } }
 
                 entry?.let { updateCover(context, manga, it.inputStream()) }
             }
             is Format.Zip -> {
                 ZipFile(format.file).use { zip ->
                     val entry = zip.entries().toList()
-                            .sortedWith(Comparator<ZipEntry> { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) })
-                            .find { !it.isDirectory && ImageUtil.isImage(it.name) { zip.getInputStream(it) } }
+                        .sortedWith(Comparator<ZipEntry> { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) })
+                        .find { !it.isDirectory && ImageUtil.isImage(it.name) { zip.getInputStream(it) } }
 
                     entry?.let { updateCover(context, manga, zip.getInputStream(it)) }
                 }
@@ -230,8 +286,8 @@ class LocalSource(private val context: Context) : CatalogueSource {
             is Format.Rar -> {
                 Archive(format.file).use { archive ->
                     val entry = archive.fileHeaders
-                            .sortedWith(Comparator<FileHeader> { f1, f2 -> f1.fileNameString.compareToCaseInsensitiveNaturalOrder(f2.fileNameString) })
-                            .find { !it.isDirectory && ImageUtil.isImage(it.fileNameString) { archive.getInputStream(it) } }
+                        .sortedWith(Comparator<FileHeader> { f1, f2 -> f1.fileNameString.compareToCaseInsensitiveNaturalOrder(f2.fileNameString) })
+                        .find { !it.isDirectory && ImageUtil.isImage(it.fileNameString) { archive.getInputStream(it) } }
 
                     entry?.let { updateCover(context, manga, archive.getInputStream(it)) }
                 }
@@ -239,8 +295,8 @@ class LocalSource(private val context: Context) : CatalogueSource {
             is Format.Epub -> {
                 EpubFile(format.file).use { epub ->
                     val entry = epub.getImagesFromPages()
-                            .firstOrNull()
-                            ?.let { epub.getEntry(it) }
+                        .firstOrNull()
+                        ?.let { epub.getEntry(it) }
 
                     entry?.let { updateCover(context, manga, epub.getInputStream(it)) }
                 }

@@ -8,9 +8,9 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
-import eu.kanade.tachiyomi.ui.source.global_search.GlobalSearchCardItem
-import eu.kanade.tachiyomi.ui.source.global_search.GlobalSearchItem
-import eu.kanade.tachiyomi.ui.source.global_search.GlobalSearchPresenter
+import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchCardItem
+import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchItem
+import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchPresenter
 import eu.kanade.tachiyomi.util.chapter.syncChaptersWithSource
 import rx.Observable
 import rx.android.schedulers.AndroidSchedulers
@@ -32,7 +32,7 @@ class SearchPresenter(
     override fun getEnabledSources(): List<CatalogueSource> {
         // Put the source of the selected manga at the top
         return super.getEnabledSources()
-                .sortedByDescending { it.id == manga.source }
+            .sortedByDescending { it.id == manga.source }
     }
 
     override fun createCatalogueSearchItem(source: CatalogueSource, results: List<GlobalSearchCardItem>?): GlobalSearchItem {
@@ -53,13 +53,13 @@ class SearchPresenter(
         replacingMangaRelay.call(true)
 
         Observable.defer { source.fetchChapterList(manga) }
-                .onErrorReturn { emptyList() }
-                .doOnNext { migrateMangaInternal(source, it, prevManga, manga, replace) }
-                .onErrorReturn { emptyList() }
-                .subscribeOn(Schedulers.io())
-                .observeOn(AndroidSchedulers.mainThread())
-                .doOnUnsubscribe { replacingMangaRelay.call(false) }
-                .subscribe()
+            .onErrorReturn { emptyList() }
+            .doOnNext { migrateMangaInternal(source, it, prevManga, manga, replace) }
+            .onErrorReturn { emptyList() }
+            .subscribeOn(Schedulers.io())
+            .observeOn(AndroidSchedulers.mainThread())
+            .doOnUnsubscribe { replacingMangaRelay.call(false) }
+            .subscribe()
     }
 
     private fun migrateMangaInternal(
@@ -105,12 +105,14 @@ class SearchPresenter(
                     db.insertChapters(dbChapters).executeAsBlocking()
                 }
             }
+
             // Update categories
             if (migrateCategories) {
                 val categories = db.getCategoriesForManga(prevManga).executeAsBlocking()
                 val mangaCategories = categories.map { MangaCategory.create(manga, it) }
                 db.setMangaCategories(mangaCategories, listOf(manga))
             }
+
             // Update track
             if (migrateTracks) {
                 val tracks = db.getTracks(prevManga).executeAsBlocking()
@@ -120,6 +122,7 @@ class SearchPresenter(
                 }
                 db.insertTracks(tracks).executeAsBlocking()
             }
+
             // Update favorite status
             if (replace) {
                 prevManga.favorite = false
@@ -127,6 +130,12 @@ class SearchPresenter(
             }
             manga.favorite = true
             db.updateMangaFavorite(manga).executeAsBlocking()
+
+            // Update reading preferences
+            manga.chapter_flags = prevManga.chapter_flags
+            db.updateFlags(manga).executeAsBlocking()
+            manga.viewer = prevManga.viewer
+            db.updateMangaViewer(manga).executeAsBlocking()
 
             // SearchPresenter#networkToLocalManga may have updated the manga title, so ensure db gets updated title
             db.updateMangaTitle(manga).executeAsBlocking()

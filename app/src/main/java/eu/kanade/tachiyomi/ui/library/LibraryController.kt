@@ -26,20 +26,21 @@ import eu.kanade.tachiyomi.data.database.models.Category
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.library.LibraryUpdateService
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
-import eu.kanade.tachiyomi.data.preference.getOrDefault
 import eu.kanade.tachiyomi.databinding.LibraryControllerBinding
 import eu.kanade.tachiyomi.ui.base.controller.NucleusController
 import eu.kanade.tachiyomi.ui.base.controller.RootController
 import eu.kanade.tachiyomi.ui.base.controller.TabbedController
 import eu.kanade.tachiyomi.ui.base.controller.withFadeTransaction
 import eu.kanade.tachiyomi.ui.main.MainActivity
+import eu.kanade.tachiyomi.ui.main.offsetFabAppbarHeight
 import eu.kanade.tachiyomi.ui.manga.MangaController
-import eu.kanade.tachiyomi.util.lang.launchInUI
 import eu.kanade.tachiyomi.util.system.getResourceColor
 import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.tachiyomi.util.view.visible
 import java.io.IOException
 import kotlinx.android.synthetic.main.main_activity.tabs
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import reactivecircus.flowbinding.appcompat.queryTextChanges
 import reactivecircus.flowbinding.viewpager.pageSelections
@@ -52,17 +53,16 @@ class LibraryController(
     bundle: Bundle? = null,
     private val preferences: PreferencesHelper = Injekt.get()
 ) : NucleusController<LibraryControllerBinding, LibraryPresenter>(bundle),
-        RootController,
-        TabbedController,
-        ActionMode.Callback,
-        ChangeMangaCategoriesDialog.Listener,
-        DeleteLibraryMangasDialog.Listener {
+    RootController,
+    TabbedController,
+    ActionMode.Callback,
+    ChangeMangaCategoriesDialog.Listener,
+    DeleteLibraryMangasDialog.Listener {
 
     /**
      * Position of the active category.
      */
-    var activeCategory: Int = preferences.lastUsedCategory().getOrDefault()
-        private set
+    private var activeCategory: Int = preferences.lastUsedCategory().get()
 
     /**
      * Action mode for selections.
@@ -154,13 +154,13 @@ class LibraryController(
                 preferences.lastUsedCategory().set(it)
                 activeCategory = it
             }
-            .launchInUI()
+            .launchIn(scope)
 
         getColumnsPreferenceForCurrentOrientation().asObservable()
-                .doOnNext { mangaPerRow = it }
-                .skip(1)
-                // Set again the adapter to recalculate the covers height
-                .subscribeUntilDestroy { reattachAdapter() }
+            .doOnNext { mangaPerRow = it }
+            .skip(1)
+            // Set again the adapter to recalculate the covers height
+            .subscribeUntilDestroy { reattachAdapter() }
 
         if (selectedMangas.isNotEmpty()) {
             createActionModeIfNeeded()
@@ -168,12 +168,18 @@ class LibraryController(
 
         settingsSheet = LibrarySettingsSheet(activity!!) { group ->
             when (group) {
-                is LibrarySettingsSheet.Settings.FilterGroup -> onFilterChanged()
-                is LibrarySettingsSheet.Settings.SortGroup -> onSortChanged()
-                is LibrarySettingsSheet.Settings.DisplayGroup -> reattachAdapter()
-                is LibrarySettingsSheet.Settings.BadgeGroup -> onDownloadBadgeChanged()
+                is LibrarySettingsSheet.Filter.FilterGroup -> onFilterChanged()
+                is LibrarySettingsSheet.Sort.SortGroup -> onSortChanged()
+                is LibrarySettingsSheet.Display.DisplayGroup -> reattachAdapter()
+                is LibrarySettingsSheet.Display.BadgeGroup -> onDownloadBadgeChanged()
             }
         }
+
+        if (preferences.downloadedOnly().get()) {
+            binding.downloadedOnly.visible()
+        }
+
+        binding.actionToolbar.offsetFabAppbarHeight(activity!!)
     }
 
     override fun onChangeStarted(handler: ControllerChangeHandler, type: ControllerChangeType) {
@@ -232,10 +238,11 @@ class LibraryController(
         }
 
         // Get the current active category.
-        val activeCat = if (adapter.categories.isNotEmpty())
+        val activeCat = if (adapter.categories.isNotEmpty()) {
             binding.libraryPager.currentItem
-        else
+        } else {
             activeCategory
+        }
 
         // Set the categories
         adapter.categories = categories
@@ -262,10 +269,11 @@ class LibraryController(
      * @return the preference.
      */
     private fun getColumnsPreferenceForCurrentOrientation(): Preference<Int> {
-        return if (resources?.configuration?.orientation == Configuration.ORIENTATION_PORTRAIT)
+        return if (resources?.configuration?.orientation == Configuration.ORIENTATION_PORTRAIT) {
             preferences.portraitColumns()
-        else
+        } else {
             preferences.landscapeColumns()
+        }
     }
 
     /**
@@ -308,9 +316,10 @@ class LibraryController(
         if (actionMode == null) {
             actionMode = (activity as AppCompatActivity).startSupportActionMode(this)
             binding.actionToolbar.show(
-                    actionMode!!,
-                    R.menu.library_selection
+                actionMode!!,
+                R.menu.library_selection
             ) { onActionItemClicked(actionMode!!, it!!) }
+            (activity as? MainActivity)?.showBottomNav(visible = false, collapse = true)
         }
     }
 
@@ -326,6 +335,7 @@ class LibraryController(
 
         val searchItem = menu.findItem(R.id.action_search)
         val searchView = searchItem.actionView as SearchView
+        searchView.maxWidth = Int.MAX_VALUE
 
         searchView.queryTextChanges()
             // Ignore events if this controller isn't at the top
@@ -334,7 +344,7 @@ class LibraryController(
                 query = it.toString()
                 searchRelay.call(query)
             }
-            .launchInUI()
+            .launchIn(scope)
 
         if (query.isNotEmpty()) {
             searchItem.expandActionView()
@@ -361,7 +371,7 @@ class LibraryController(
         val filterItem = menu.findItem(R.id.action_filter)
 
         // Tint icon if there's a filter active
-        if (settingsSheet.hasActiveFilters()) {
+        if (settingsSheet.filters.hasActiveFilters()) {
             val filterColor = activity!!.getResourceColor(R.attr.colorFilterActive)
             DrawableCompat.setTint(filterItem.icon, filterColor)
         }
@@ -424,10 +434,13 @@ class LibraryController(
     }
 
     override fun onDestroyActionMode(mode: ActionMode?) {
-        binding.actionToolbar.hide()
         // Clear all the manga selections and notify child views.
         selectedMangas.clear()
         selectionRelay.call(LibrarySelectionEvent.Cleared())
+
+        binding.actionToolbar.hide()
+        (activity as? MainActivity)?.showBottomNav(visible = true, collapse = true)
+
         actionMode = null
     }
 
@@ -481,11 +494,11 @@ class LibraryController(
 
         // Get indexes of the common categories to preselect.
         val commonCategoriesIndexes = presenter.getCommonCategories(mangas)
-                .map { categories.indexOf(it) }
-                .toTypedArray()
+            .map { categories.indexOf(it) }
+            .toTypedArray()
 
         ChangeMangaCategoriesDialog(this, mangas, categories, commonCategoriesIndexes)
-                .showDialog(router)
+            .showDialog(router)
     }
 
     private fun showDeleteMangaDialog() {
@@ -512,8 +525,13 @@ class LibraryController(
         if (manga.favorite) {
             val intent = Intent(Intent.ACTION_GET_CONTENT)
             intent.type = "image/*"
-            startActivityForResult(Intent.createChooser(intent,
-                    resources?.getString(R.string.file_select_cover)), REQUEST_IMAGE_OPEN)
+            startActivityForResult(
+                Intent.createChooser(
+                    intent,
+                    resources?.getString(R.string.file_select_cover)
+                ),
+                REQUEST_IMAGE_OPEN
+            )
         } else {
             activity?.toast(R.string.notification_first_add_to_library)
         }
